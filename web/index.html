@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Grok Build</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230c0c0e'/%3E%3Cpath d='M8 22V10h3.2l4.8 8.4L20.8 10H24v12h-2.4v-7.6L17.2 22h-2.4l-4.4-7.6V22H8z' fill='%23f4c025'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="/vendor/xterm.min.css" />
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="app">
+  <div id="auth-overlay" class="overlay hidden">
+    <div class="auth-shell">
+      <div class="auth-brand">
+        <div class="auth-mark" aria-hidden="true">G</div>
+        <h1>Grok Build</h1>
+        <p>Persistent CLI workspaces. Tabs, splits, and live PTYs that survive refresh.</p>
+        <ul class="auth-points">
+          <li>One project, many Grok sessions</li>
+          <li>Split panes with live terminals</li>
+          <li>Passkeys and tunnel-ready auth</li>
+        </ul>
+      </div>
+      <div class="auth-card">
+        <div id="setup-view" class="hidden">
+          <h2>Create admin</h2>
+          <p class="muted">First run — this account owns the workspace.</p>
+          <form id="setup-form">
+            <label>Username<input id="setup-user" autocomplete="username" required /></label>
+            <label>Password<input id="setup-pass" type="password" autocomplete="new-password" minlength="8" required /></label>
+            <button type="submit" id="btn-setup" class="primary">Create account</button>
+          </form>
+          <div id="setup-msg" class="msg"></div>
+        </div>
+        <div id="login-view" class="hidden">
+          <h2>Welcome back</h2>
+          <p class="muted">Sign in to attach to running Grok sessions.</p>
+          <form id="login-form">
+            <label>Username<input id="login-user" autocomplete="username" required /></label>
+            <label>Password<input id="login-pass" type="password" autocomplete="current-password" /></label>
+            <button type="submit" id="btn-login" class="primary">Continue</button>
+          </form>
+          <div class="divider"><span>or</span></div>
+          <button id="btn-passkey" class="secondary" type="button">Sign in with passkey</button>
+          <div id="login-msg" class="msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <header id="header">
+    <div class="header-left">
+      <button id="btn-toggle-sidebar" class="icon-btn" title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      </button>
+      <span class="logo"><span class="logo-mark">G</span> Grok Build</span>
+      <span class="crumb" id="project-title">No project</span>
+    </div>
+    <div class="header-right">
+      <div class="split-btn">
+        <button id="btn-new-tab" class="btn" title="New conversation (Ctrl+`)" disabled>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          New
+        </button>
+        <button id="btn-new-menu" class="btn chevron" title="More session actions" disabled aria-label="Session menu">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
+        <div id="new-menu" class="menu hidden">
+          <button data-act="new">New conversation</button>
+          <button data-act="continue">Continue last</button>
+          <button data-act="resume">Resume…</button>
+        </div>
+      </div>
+      <button id="btn-split-h" class="btn" title="Split right" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>
+        Split
+      </button>
+      <button id="btn-split-v" class="btn" title="Split down" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 12h18"/></svg>
+        Split
+      </button>
+      <span class="sep"></span>
+      <button id="btn-palette" class="icon-btn" title="Command palette (Ctrl+K)" aria-label="Command palette">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3-3"/></svg>
+      </button>
+      <button id="btn-settings" class="icon-btn" title="Settings (Ctrl+,)" aria-label="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9c.3.6.9 1 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+      <button id="btn-logout" class="btn ghost" title="Logout">Logout</button>
+      <span id="user-badge" class="user-badge"></span>
+    </div>
+  </header>
+
+  <div id="layout">
+    <aside id="sidebar">
+      <div class="sidebar-head">
+        <h3>Projects</h3>
+        <button id="btn-new-project" class="btn small primary-ghost">New</button>
+      </div>
+      <div id="project-list" class="project-list"></div>
+      <form id="new-project-form" class="hidden">
+        <label>Name<input id="proj-name" placeholder="my-app" required /></label>
+        <label>Path
+          <div class="row">
+            <input id="proj-path" placeholder="/absolute/path/to/project" required />
+            <button type="button" id="btn-browse-path" class="small">Browse</button>
+          </div>
+        </label>
+        <div class="row">
+          <button type="submit" id="btn-create-project" class="primary small">Create</button>
+          <button type="button" id="btn-cancel-project" class="small">Cancel</button>
+        </div>
+        <div id="proj-msg" class="msg"></div>
+      </form>
+      <div class="sidebar-foot">
+        <p class="muted small">Tabs hide other sessions; they keep running. Closing a pane can detach or kill the PTY.</p>
+      </div>
+    </aside>
+
+    <main id="main">
+      <div id="restore-banner" class="banner hidden">
+        <span id="restore-text">Server restarted. Restore previous Grok sessions?</span>
+        <div class="row">
+          <button id="btn-restore" class="primary small">Restore</button>
+          <button id="btn-dismiss-restore" class="small">Dismiss</button>
+        </div>
+      </div>
+      <div id="tabs-bar"></div>
+      <div id="pane-container"></div>
+      <div id="empty-state" class="empty-state">
+        <div class="empty-mark">G</div>
+        <h2>Open a Grok workspace</h2>
+        <p>Pick a project, then start a live CLI session. New opens a tab. Split adds another Grok beside it.</p>
+        <div class="empty-actions">
+          <button id="btn-empty-new-project" class="primary">New project</button>
+          <button id="btn-empty-new-tab" class="secondary" disabled>New conversation</button>
+          <button id="btn-empty-continue" class="secondary" disabled>Continue last</button>
+        </div>
+        <ul class="hint-list">
+          <li><kbd>Ctrl</kbd><kbd>`</kbd> new conversation</li>
+          <li><kbd>Ctrl</kbd><kbd>K</kbd> command palette</li>
+          <li><kbd>?</kbd> keyboard shortcuts</li>
+        </ul>
+      </div>
+    </main>
+  </div>
+
+  <footer id="status-bar">
+    <span id="status-left">Ready</span>
+    <span id="status-mid" class="muted"></span>
+    <span id="status-right" class="muted">Ctrl+K palette · Ctrl+` new</span>
+  </footer>
+
+  <div id="settings-overlay" class="overlay hidden">
+    <div class="modal settings-modal">
+      <div class="modal-head">
+        <h2>Settings</h2>
+        <button id="btn-close-settings" class="icon-btn" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="settings-layout">
+        <nav id="settings-nav" class="settings-nav" aria-label="Settings sections">
+          <button type="button" data-tab="webui" class="active">WebUI</button>
+        </nav>
+        <div class="settings-main">
+          <div id="settings-tab-webui" class="settings-tab">
+            <section>
+              <h3>Public URL</h3>
+              <p class="muted small">Cloudflare Tunnel origin. Used for CORS, Secure cookies, and passkeys. Leave empty for local use.</p>
+              <div class="row">
+                <input id="setting-public-url" placeholder="https://your-app.trycloudflare.com" />
+                <button id="btn-save-public-url" class="primary">Save</button>
+              </div>
+              <div id="settings-msg" class="msg"></div>
+              <p class="muted small meta-line">RP ID <code id="rpid-display">-</code> · binary <code id="grok-bin-display">grok</code> · max PTYs <code id="max-sessions-display">16</code> · running <code id="running-display">0</code></p>
+            </section>
+            <section>
+              <h3>Launch defaults</h3>
+              <p class="muted small">Applied to new, continue, and resume unless you override in the palette.</p>
+              <div class="grid-2">
+                <label>Model<input id="pref-model" placeholder="e.g. grok-build" /></label>
+                <label>Permission
+                  <select id="pref-permission">
+                    <option value="">ask (default)</option>
+                    <option value="auto">auto</option>
+                    <option value="acceptEdits">accept edits</option>
+                    <option value="bypassPermissions">always-approve</option>
+                  </select>
+                </label>
+                <label>Sandbox
+                  <select id="pref-sandbox">
+                    <option value="">default</option>
+                    <option value="off">off</option>
+                    <option value="workspace">workspace</option>
+                    <option value="read-only">read-only</option>
+                    <option value="strict">strict</option>
+                  </select>
+                </label>
+                <label class="check"><input type="checkbox" id="pref-yolo" /> Always-approve (--yolo)</label>
+              </div>
+            </section>
+            <section>
+              <h3>Terminal</h3>
+              <div class="grid-2">
+                <label>Font size<input id="pref-font" type="number" min="10" max="22" step="1" /></label>
+                <label>Scrollback<input id="pref-scrollback" type="number" min="500" max="50000" step="500" /></label>
+                <label class="check"><input type="checkbox" id="pref-copy-select" /> Copy on select</label>
+              </div>
+              <button id="btn-save-prefs" class="primary">Save preferences</button>
+              <div id="prefs-msg" class="msg"></div>
+            </section>
+            <section>
+              <h3>Passkeys</h3>
+              <p class="muted small">Register a platform authenticator so you can sign in without a password.</p>
+              <div class="row">
+                <input id="passkey-name" placeholder="e.g. Mac Touch ID" />
+                <button id="btn-add-passkey" class="primary">Add passkey</button>
+              </div>
+              <div id="passkey-list" class="list"></div>
+              <div id="passkey-msg" class="msg"></div>
+            </section>
+          </div>
+          <div id="settings-tab-grok" class="settings-tab hidden">
+            <div class="settings-toolbar">
+              <input id="grok-search" placeholder="Filter settings…" autocomplete="off" />
+              <label class="check tight"><input type="checkbox" id="grok-show-unset" checked /> Show unset defaults</label>
+            </div>
+            <p class="muted small grok-hint">Unset keys keep Grok’s built-in default. Saving rewrites <code>config.toml</code> (a <code>.bak</code> is kept). New sessions pick up changes; running PTYs keep the old process.</p>
+            <div id="grok-settings-root"></div>
+          </div>
+          <div id="settings-tab-raw" class="settings-tab hidden">
+            <p class="muted small">Full <code>config.toml</code>. Must be valid TOML. This path overwrites the file as written and does not preserve the form editor’s unsaved field edits.</p>
+            <textarea id="grok-raw" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+      <div class="settings-foot">
+        <div class="settings-foot-row">
+          <span id="grok-path" class="muted small"></span>
+          <div class="row">
+            <button type="button" id="btn-revert-grok" class="small">Revert</button>
+            <button type="button" id="btn-save-grok" class="primary">Save Grok config</button>
+          </div>
+        </div>
+        <div id="grok-msg" class="msg"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="help-overlay" class="overlay hidden">
+    <div class="modal narrow">
+      <div class="modal-head">
+        <h2>Shortcuts</h2>
+        <button id="btn-close-help" class="icon-btn" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <dl class="shortcut-list">
+        <div><dt><kbd>Ctrl</kbd><kbd>`</kbd></dt><dd>New conversation</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>`</kbd></dt><dd>Continue last</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>K</kbd></dt><dd>Command palette</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>B</kbd></dt><dd>Toggle sidebar</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>,</kbd></dt><dd>Settings</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>W</kbd></dt><dd>Close focused pane</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>Tab</kbd></dt><dd>Next tab</dd></div>
+        <div><dt><kbd>Ctrl</kbd><kbd>\</kbd></dt><dd>Maximize pane</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd>This help</dd></div>
+        <div><dt><kbd>Esc</kbd></dt><dd>Close dialogs</dd></div>
+      </dl>
+    </div>
+  </div>
+
+  <div id="palette-overlay" class="overlay hidden">
+    <div class="palette">
+      <input id="palette-input" placeholder="Type a command…" autocomplete="off" />
+      <div id="palette-list"></div>
+    </div>
+  </div>
+
+  <div id="resume-overlay" class="overlay hidden">
+    <div class="modal">
+      <div class="modal-head">
+        <h2>Resume conversation</h2>
+        <button id="btn-close-resume" class="icon-btn" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <input id="resume-filter" placeholder="Filter by title…" />
+      <div id="resume-list" class="list tall"></div>
+    </div>
+  </div>
+
+  <div id="browse-overlay" class="overlay hidden">
+    <div class="modal">
+      <div class="modal-head">
+        <h2>Browse folders</h2>
+        <button id="btn-close-browse" class="icon-btn" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <p class="muted small" id="browse-path"></p>
+      <input id="browse-filter" type="search" placeholder="Search subfolders…" autocomplete="off" />
+      <div id="browse-list" class="list tall"></div>
+      <div class="row">
+        <button id="btn-browse-up" class="small">Up</button>
+        <button id="btn-browse-choose" class="primary">Use this folder</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="close-overlay" class="overlay hidden">
+    <div class="modal narrow">
+      <div class="modal-head">
+        <h2>Close session</h2>
+        <button id="btn-close-close" class="icon-btn" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <p id="close-text" class="muted">Detach keeps the PTY running in the background. Kill stops Grok.</p>
+      <div class="row end">
+        <button id="btn-close-cancel" class="small">Cancel</button>
+        <button id="btn-close-detach" class="secondary">Detach</button>
+        <button id="btn-close-kill" class="primary danger-btn">Kill</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="edit-project-overlay" class="overlay hidden">
+    <div class="modal narrow">
+      <div class="modal-head">
+        <h2>Edit project</h2>
+        <button id="btn-close-edit-project" class="icon-btn" aria-label="Close">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <form id="edit-project-form">
+        <label>Name<input id="edit-proj-name" required /></label>
+        <label>Path
+          <div class="row">
+            <input id="edit-proj-path" required />
+            <button type="button" id="btn-browse-edit-path" class="small">Browse</button>
+          </div>
+        </label>
+        <div id="edit-proj-msg" class="msg"></div>
+        <button type="submit" class="primary">Save</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script src="/vendor/xterm.min.js"></script>
+<script src="/vendor/xterm-addon-fit.min.js"></script>
+<script src="/vendor/xterm-addon-web-links.min.js"></script>
+<script src="/vendor/xterm-addon-webgl.min.js"></script>
+<script src="/vendor/xterm-addon-unicode11.min.js"></script>
+<script src="/settings.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

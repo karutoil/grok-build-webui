@@ -1,0 +1,98 @@
+# Builds and publishes static grok-webui binaries on every v* tag.
+#
+# Assets land on the GitHub Release as:
+#   grok-webui-linux-amd64.tar.gz
+#   grok-webui-linux-arm64.tar.gz
+#   checksums.txt
+#
+# scripts/install.sh downloads these automatically, so end users do NOT need
+# a Go toolchain to install/update.
+#
+# Manual run (workflow_dispatch) builds from the current branch without
+# creating a release — artifacts only.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed to create the GitHub Release
+
+env:
+  BINARY: grok-webui
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Compute version stamp
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9] ]]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=v0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build static binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION}" \
+            -o dist/${BINARY} ./cmd/server
+          tar -czf dist/${BINARY}-${GOOS}-${GOARCH}.tar.gz -C dist ${BINARY}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BINARY }}-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: release
+      - name: Generate checksums
+        working-directory: release
+        run: |
+          sha256sum --binary *.tar.gz | sed 's/\*//' > checksums.txt
+          cat checksums.txt
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            release/*.tar.gz
+            release/checksums.txt

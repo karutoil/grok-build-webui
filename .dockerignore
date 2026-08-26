@@ -1,0 +1,17 @@
+# VCS / docs
+.git
+.github
+*.md
+LICENSE
+
+# local state — never bake into the image or send as build context
+data/
+.env
+
+# build artifacts
+grok-webui
+/scripts
+
+# editor noise
+.idea/
+.vscode/

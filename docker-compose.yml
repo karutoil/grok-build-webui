@@ -1,0 +1,60 @@
+# Grok Build WebUI — compose config (acts like a native systemd service)
+#
+# This stack is configured for "host service" behavior:
+#   * runs as your user (${UID}:${GID} — written by scripts/install.sh into .env)
+#   * network_mode: host   => listens on :${WEBUI_PORT} directly, like a systemd unit
+#   * ${HOME_DIR} is bind-mounted AT THE SAME PATH so project directories and
+#     the host's grok binary (~/.grok/bin/grok) resolve identically
+#   * restart: unless-stopped => survives crashes and reboots 24/7
+#
+# Fill in .env next to this file (scripts/install.sh does it for you),
+# then: docker compose up -d --build
+
+name: grok-webui
+
+services:
+  webui:
+    build: .
+    image: grok-webui:local
+    container_name: grok-webui
+    init: true                       # reap orphaned PTY children
+    restart: unless-stopped          # behave like a system service
+    network_mode: host               # native-like networking; edit below to isolate
+    # If you prefer an isolated bridge network instead of host mode:
+    #   1. comment out `network_mode` above
+    #   2. uncomment `ports:` below
+    # ports:
+    #   - "${WEBUI_PORT}:8080"
+    user: "${UID:-1000}:${GID:-1000}"
+    hostname: grok-webui
+    environment:
+      TZ: "${TZ:-UTC}"
+      HOME: "${HOME_DIR}"
+      GROK_WEBUI_ADDR: ":${WEBUI_PORT:-8080}"
+      GROK_WEBUI_DATA: "${DATA_DIR:-/app/data}"
+      GROK_WEBUI_PUBLIC_URL: "${PUBLIC_URL:-}"
+      GROK_WEBUI_GROK_BIN: "${GROK_BIN:-grok}"
+      GROK_HOME: "${HOME_DIR}/.grok"
+      GROK_WEBUI_MAX_SESSIONS: "${MAX_SESSIONS:-16}"
+      PATH: "${HOME_DIR}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    volumes:
+      # project files + grok home, mounted at identical paths
+      - "${HOME_DIR}:${HOME_DIR}"
+      - "${DATA_DIR_HOST:-./data}:${DATA_DIR:-/app/data}"
+      # OPTIONAL: expose the ENTIRE host filesystem same-path like a true
+      # system service. Uncomment to allow projects outside $HOME:
+      # - "/:/"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      # public endpoint, no auth required
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:${WEBUI_PORT:-8080}/api/auth/setup-required"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
