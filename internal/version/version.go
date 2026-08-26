@@ -59,14 +59,41 @@ func Parse(raw string) (Semver, bool) {
 	return Semver{Parts: parts}, true
 }
 
-// IsLocalBuild reports whether the stamp marks a non-release build
-// (source build, git describe output, plain dev).
+// stripReleaseMeta removes the CI release suffix "+g<sha>" (build metadata
+// attached to official releases). Returns raw unchanged when absent.
+func stripReleaseMeta(raw string) string {
+	if i := strings.Index(raw, "+g"); i >= 0 {
+		rest := raw[i+2:]
+		hexish := true
+		n := 0
+		for _, c := range rest {
+			if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+				hexish = false
+				break
+			}
+			n++
+			if n > 40 {
+				hexish = false
+				break
+			}
+		}
+		if hexish && n >= 7 {
+			return raw[:i]
+		}
+	}
+	return raw
+}
+
+// IsLocalBuild reports whether the stamp marks a non-release build.
+// Release binaries carry "+g<sha>"; source builds show git-describe output
+// like "v0.1-3-g<sha>" ("-g"), possibly "-dirty", or plain "dev".
 func IsLocalBuild(raw string) bool {
 	s := strings.TrimSpace(raw)
 	if s == "" || s == "dev" {
 		return true
 	}
-	return strings.Contains(s, "+g") || strings.Contains(s, "-g") || strings.Contains(s, "-dirty")
+	s = stripReleaseMeta(s)
+	return strings.Contains(s, "-g") || strings.Contains(s, "-dirty")
 }
 
 // Compare returns -1, 0, 1 as a<b, a==b, a>b. Missing segments count as 0.
@@ -203,12 +230,15 @@ func Status(currentRaw, latest string) string {
 
 // Channel classifies how this binary was produced.
 func Channel(currentRaw string) string {
-	if IsLocalBuild(currentRaw) {
-		s := strings.TrimSpace(currentRaw)
-		if s == "dev" || s == "" {
-			return ChannelDev
-		}
-		return ChannelLocal
+	s := strings.TrimSpace(currentRaw)
+	if s == "" || s == "dev" {
+		return ChannelDev
+	}
+	if stripReleaseMeta(s) != s {
+		return ChannelRelease // well-formed CI stamp "+g<sha>"
+	}
+	if strings.Contains(s, "-g") || strings.Contains(s, "-dirty") || strings.Contains(s, "+g") {
+		return ChannelLocal // git-describe source build or malformed suffix
 	}
 	return ChannelRelease
 }

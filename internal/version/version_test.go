@@ -74,8 +74,12 @@ func TestStatus(t *testing.T) {
 		{"v0.10", "v0.9", StatusUpToDate}, // numeric compare wins
 		{"v0.7", "", StatusUnknown},
 		{"dev", "v9.9", StatusLocal},
-		{"v0.7+g9abc123def", "v9.9", StatusLocal},
-		{"v0.7-g9abc123", "v9.9", StatusLocal},
+		// CI releases carry "+g<sha>": still release channel, semver compared
+		{"v0.7+g9abc123def", "v9.9", StatusOutOfDate},
+		{"v0.1+g0123456789abcdef", "v0.2", StatusOutOfDate},
+		{"v0.2+gfedcba9876543", "v0.2", StatusUpToDate},
+		{"v0.7-g9abc123", "v9.9", StatusLocal},   // git-describe source build
+		{"v0.8-14-g724b9dc-dirty", "v0.2", StatusLocal},
 		{"weird", "v1.0", StatusUnknown},
 	}
 	for _, c := range cases {
@@ -90,7 +94,10 @@ func TestChannel(t *testing.T) {
 		in, want string
 	}{
 		{"v0.7", ChannelRelease},
-		{"v0.7+g9abc", ChannelLocal},
+		{"v0.7+g9abc123", ChannelRelease},        // CI stamp ≠ local
+		{"v0.7+gnotahex!", ChannelLocal},         // malformed metadata → conservative
+		{"v0.7-g9abc123", ChannelLocal},
+		{"v0.1-3-g724b9dc-dirty", ChannelLocal},
 		{"dev", ChannelDev},
 		{"", ChannelDev},
 	}
