@@ -19,10 +19,10 @@ when you close the pane or stop the service.
 
 ## Install
 
+One command — no clone, no Go, no Docker knowledge required:
+
 ```sh
-git clone https://github.com/karutoil/grok-build-webui.git
-cd grok-build-webui
-./scripts/install.sh
+curl -fsSL https://raw.githubusercontent.com/karutoil/grok-build-webui/main/scripts/install.sh | bash
 ```
 
 An interactive wizard takes it from there — every question shows its default,
@@ -33,14 +33,15 @@ service should run:
 | Mode | What you get |
 |------|--------------|
 | **native** *(recommended)* | Plain systemd unit running a static binary as your user — fewest moving parts, nothing extra to install. No Go needed: prebuilt binaries download from GitHub Releases automatically. |
-| **docker** | Compose stack running as *you* (`UID`/`GID`), with your `$HOME` bind-mounted **at the same path** so project dirs and the host `grok` CLI (`~/.grok/bin/grok`) work exactly as natively. Handy if you want isolation or already run everything in containers. |
+| **docker** | Compose stack pulling a prebuilt CI image (`ghcr.io/karutoil/grok-build-webui`), running as *you* (`UID`/`GID`) with your `$HOME` bind-mounted **at the same path**, so project dirs and the host `grok` CLI work exactly as natively. Builds locally only if the registry is unreachable. |
 
 Either way you get: enabled on boot, automatic restart on crash, logs in
 `journalctl`, and updates that never touch your database.
 
-No Go installed? No problem — release binaries are built by CI on every tag
-and verified against checksums at download time. Compiling locally is still
-possible with `install --from-source`.
+No Go installed? No problem — **every push to `main` publishes a release
+automatically** (versioned by commit, e.g. `v0.42`) with checksum-verified
+static binaries for amd64/arm64 and a matching Docker image on GHCR.
+Compiling locally is still possible with `install --from-source`.
 
 ### After installing
 
@@ -138,7 +139,9 @@ make run       # :8080, data in ./data
 ```
 
 Frontend is vanilla JS in `web/` (embedded at compile time — rebuild after
-edits). CI builds tagged releases via `.github/workflows/release.yml`.
+edits). Every push to `main` auto-releases binaries (`v0.<run number>`)
+and a GHCR image via `.github/workflows/release.yml` — with module/build
+caches and GHA layer caching so builds stay fast.
 
 </details>
 

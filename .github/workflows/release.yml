@@ -1,28 +1,39 @@
-# Builds and publishes static grok-webui binaries on every v* tag.
+# Automatic releases — no tags needed.
 #
-# Assets land on the GitHub Release as:
-#   grok-webui-linux-amd64.tar.gz
-#   grok-webui-linux-arm64.tar.gz
-#   checksums.txt
+# Every push to `main`:
+#   1. runs go vet + go test            (module & build caches)
+#   2. cross-compiles linux amd64+arm64 static binaries (parallel, cached)
+#   3. publishes a GitHub Release tagged v0.<run_number>
+#        - grok-webui-linux-<arch>.tar.gz  +  checksums.txt
+#   4. pushes a prebuilt Docker image to ghcr.io/karutoil/grok-build-webui
+#      (:latest and the version tag) with GHA layer cache
 #
-# scripts/install.sh downloads these automatically, so end users do NOT need
-# a Go toolchain to install/update.
+# Versioning is commit-based: run_number is a monotonic counter assigned by
+# GitHub per workflow run, so every commit that lands on main gets the next
+# version automatically. scripts/install.sh detects "latest release" itself.
 #
-# Manual run (workflow_dispatch) builds from the current branch without
-# creating a release — artifacts only.
+# Manual re-run (workflow_dispatch) publishes the next sequential number.
 
 name: release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write # needed to create the GitHub Release
+  contents: write # create tags + GitHub Releases
+  packages: write # push images to GHCR
 
 env:
   BINARY: grok-webui
+  REGISTRY_IMAGE: ghcr.io/${{ github.repository }}
+  # stable across all jobs of one run → identical tag everywhere
+  VERSION_TAG: v0.${{ github.run_number }}
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   test:
@@ -32,6 +43,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache-dependency-path: go.sum
       - name: Vet
         run: go vet ./...
       - name: Test
@@ -50,21 +62,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: Compute version stamp
-        id: ver
-        run: |
-          if [[ "${GITHUB_REF_NAME}" =~ ^v[0-9] ]]; then
-            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-          else
-            echo "version=v0-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-          fi
+          cache-dependency-path: go.sum
       - name: Build static binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          VERSION: ${{ steps.ver.outputs.version }}
+          VERSION: ${{ env.VERSION_TAG }}+g${{ github.sha }}
         run: |
           mkdir -p dist
+          # stamp e.g. "v0.42+g9abc123def" (tag + commit for traceability)
           CGO_ENABLED=0 go build -trimpath \
             -ldflags "-s -w -X main.version=${VERSION}" \
             -o dist/${BINARY} ./cmd/server
@@ -74,25 +80,64 @@ jobs:
           name: ${{ env.BINARY }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*.tar.gz
           if-no-files-found: error
+          retention-days: 7
 
-  publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+  image:
+    needs: test
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build & push (GHA layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          provenance: false # keeps the tag list clean; drop if you want attestations
+          build-args: |
+            VERSION=${{ env.VERSION_TAG }}
+          tags: |
+            ${{ env.REGISTRY_IMAGE }}:${{ env.VERSION_TAG }}
+            ${{ env.REGISTRY_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
           path: release
+      - name: Create version tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "${VERSION_TAG}" -m "Automatic release for $(git rev-parse --short HEAD)"
+          git push origin "${VERSION_TAG}"
       - name: Generate checksums
         working-directory: release
         run: |
           sha256sum --binary *.tar.gz | sed 's/\*//' > checksums.txt
-          cat checksums.txt
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.VERSION_TAG }}
+          make_latest: true
           generate_release_notes: true
+          body: |
+            Automated release for commit ${{ github.sha }}.
+
+            **Install / update:** `curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | bash`
+            **Docker:** `ghcr.io/${{ github.repository }}:${{ env.VERSION_TAG }}`
           files: |
             release/*.tar.gz
             release/checksums.txt

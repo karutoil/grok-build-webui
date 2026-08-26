@@ -17,6 +17,9 @@
 #   ./scripts/install.sh                 # launch the interactive TUI
 #   ./scripts/install.sh install|update|remove|status|logs|config|doctor
 #
+# Zero-setup install (no clone needed):
+#   curl -fsSL https://raw.githubusercontent.com/karutoil/grok-build-webui/main/scripts/install.sh | bash
+#
 # Non-interactive examples:
 #   ./scripts/install.sh install --mode docker --port 8080 -y
 #   ./scripts/install.sh install --mode native --port 9090 -y
@@ -35,16 +38,29 @@ SERVICE="$APP_NAME"
 UNIT="/etc/systemd/system/${SERVICE}.service"
 COMPOSE_FILE_DEFAULT="docker-compose.yml"
 
-# GitHub repo used for release downloads when not set another way
-# (--repo flag > GROK_WEBUI_REPO env > git remote origin > this default).
-DEFAULT_REPO="karutoil/grok-build-webui"
+# This project on GitHub — used for release downloads and raw one-liners.
+# (--repo flag > GROK_WEBUI_REPO env > git remote origin > this default)
+REPO_DEFAULT="karutoil/grok-build-webui"
+RAW_BASE="https://raw.githubusercontent.com/${REPO_DEFAULT}/main"
 
 # Official Grok Build CLI bootstrap script (embedded in the grok binary's
 # own help text). Used to provision grok when it is missing.
 GROK_INSTALL_URL="https://x.ai/cli/install.sh"
+#
+# Run directly from a clone, or with zero setup:
+#   curl -fsSL ${RAW_BASE}/scripts/install.sh | bash
+# Piped runs have no repo context, so we work out of ~/grok-build-webui
+# and fetch a source snapshot only when actually needed.
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
-APP_DIR="$(cd -- "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)" || SCRIPT_DIR=""
+if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/../go.mod" ]]; then
+	APP_DIR="$(cd -- "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
+	STANDALONE=0
+else
+	APP_DIR="${GROK_WEBUI_APP_DIR:-$HOME/grok-build-webui}"
+	STANDALONE=1
+	mkdir -p "$APP_DIR"
+fi
 
 if [[ -t 1 ]]; then
 	C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'; C_RED=$'\033[31m'
@@ -65,7 +81,7 @@ die()  { err "$*"; exit 1; }
 
 MODE=""; PORT=""; PUBLIC_URL=""; DATA_DIR=""
 CONTAINER_DATA="/app/data"; GROK_BIN=""; SVC_USER=""; SVC_GROUP=""; TZ_VAL=""
-BINARY_SOURCE=""; INSTALLED_VERSION=""; REPO="${GROK_WEBUI_REPO:-$DEFAULT_REPO}"
+BINARY_SOURCE=""; INSTALLED_VERSION=""; REPO="${GROK_WEBUI_REPO:-$REPO_DEFAULT}"
 FROM_SOURCE="" FLAG_FORCE=0
 
 STATE_ENV="$APP_DIR/.env"
@@ -109,10 +125,14 @@ custom_tail() {
 }
 
 save_state() {
+	# SVC_USER may be unset on follow-up runs (config/update) — heal from env
+	local user="${SVC_USER:-${SUDO_USER:-$(id -un)}}"
+	SVC_USER="$user"
+	SVC_GROUP="${SVC_GROUP:-$(id -gn "$user")}"
 	local uid gid home_dir
-	uid="$(id -u "${SVC_USER}")"
-	gid="$(id -g "${SVC_USER}")"
-	home_dir="$(get_home "${SVC_USER}")"
+	uid="$(id -u "$user")"
+	gid="$(id -g "$user")"
+	home_dir="$(get_home "$user")"
 	mkdir -p "$DATA_DIR"
 
 	cat > "$STATE_ENV" <<EOF
@@ -141,6 +161,10 @@ INSTALLED_VERSION=$INSTALLED_VERSION
 
 # --- release download source ---
 REPO=$REPO
+
+# --- runtime identity (service user; reused by config/update runs) ---
+SVC_USER=$SVC_USER
+SVC_GROUP=$SVC_GROUP
 
 # --- container identity (consumed by docker compose) ---
 UID=$uid
@@ -372,11 +396,20 @@ build_binary() {
 	log "building ${APP_NAME} with go ..."
 	( cd "$APP_DIR" && CGO_ENABLED=0 go build -o "${APP_NAME}.new" ./cmd/server )
 	mv -f "$APP_DIR/${APP_NAME}.new" "$APP_DIR/$APP_NAME"   # atomic swap; safe if service running (ETXTBSY)
-	ok "built $APP_DIR/$APP_NAME"
+	BINARY_SOURCE="source"
+	INSTALLED_VERSION="$(git -C "$APP_DIR" describe --tags --always 2>/dev/null || echo dev)"
+	ok "built $APP_DIR/$APP_NAME (${INSTALLED_VERSION})"
 }
 
-docker_build_up() {
-	( cd "$APP_DIR" && docker compose --env-file "$STATE_ENV" -f "$COMPOSE_FILE_DEFAULT" up -d --build )
+ensure_docker_image() { # pull CI image; build locally only if that fails
+	( cd "$APP_DIR" || exit 1
+	  if docker compose --env-file "$STATE_ENV" -f "$COMPOSE_FILE_DEFAULT" pull >/dev/null 2>&1; then
+		  echo "  ok pulled latest image from ghcr.io"
+	  else
+		  echo "  [i] registry unavailable or offline — building image locally..."
+		  docker compose --env-file "$STATE_ENV" -f "$COMPOSE_FILE_DEFAULT" build
+	  fi
+	  docker compose --env-file "$STATE_ENV" -f "$COMPOSE_FILE_DEFAULT" up -d )
 }
 
 # ============================================================================
@@ -384,6 +417,27 @@ docker_build_up() {
 # ============================================================================
 
 is_repo()        { git -C "$APP_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; }
+
+bootstrap_app_dir() { # download a source snapshot into APP_DIR (no clone needed)
+	detect_repo
+	[[ -n "$REPO" ]] || die "don't know which GitHub repo to fetch sources from."
+	log "fetching project snapshot from github.com/${REPO} (main)..."
+	local tmp
+	tmp="$(mktemp -d)"
+	if ! gh_fetch "https://github.com/${REPO}/archive/refs/heads/main.tar.gz" > "$tmp/src.tar.gz" 2>/dev/null; then
+		rm -rf "$tmp"; die "could not download source snapshot — check network/repo name."
+	fi
+	if ! tar -xzf "$tmp/src.tar.gz" -C "$APP_DIR" --strip-components=1 2>/dev/null; then
+		rm -rf "$tmp"; die "failed to unpack source snapshot into $APP_DIR."
+	fi
+	rm -rf "$tmp"
+	ok "project files in place at $APP_DIR (settings & data untouched)"
+}
+
+ensure_sources_present() { # standalone installs: docker mode / --from-source need real sources
+	if [[ -f "$APP_DIR/go.mod" ]]; then return 0; fi
+	bootstrap_app_dir
+}
 
 detect_repo() {
 	[[ -n "$REPO" ]] && return 0
@@ -669,10 +723,14 @@ Wants=network-online.target
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=@APP_DIR@
-ExecStart=@DOCKER@ compose --env-file @APP_DIR@/.env -f @APP_DIR@/docker-compose.yml up -d --wait --quiet-pull
+# best-effort image refresh ("-": ignore failures when offline); local
+# build fallback still exists in the compose file for first installs
+ExecStartPre=-@DOCKER@ compose --env-file @APP_DIR@/.env -f @APP_DIR@/docker-compose.yml pull --quiet --ignore-buildable
+ExecStart=@DOCKER@ compose --env-file @APP_DIR@/.env -f @APP_DIR@/docker-compose.yml up -d --wait
 ExecStop=@DOCKER@ compose --env-file @APP_DIR@/.env -f @APP_DIR@/docker-compose.yml stop
-ExecReload=@DOCKER@ compose --env-file @APP_DIR@/.env -f @APP_DIR@/docker-compose.yml up -d --build
-TimeoutStartSec=5min
+ExecReload=-@DOCKER@ compose --env-file @APP_DIR@/.env -f @APP_DIR@/docker-compose.yml pull --quiet --ignore-buildable
+ExecReload=@DOCKER@ compose --env-file @APP_DIR@/.env -f @APP_DIR@/docker-compose.yml up -d --wait
+TimeoutStartSec=10min
 
 [Install]
 WantedBy=multi-user.target
@@ -775,15 +833,21 @@ do_install() {
 
 	collect_common_settings
 	confirm_plan
-	save_state
+
+	if [[ "$MODE" == "docker" || -n "$FROM_SOURCE" ]]; then
+		ensure_sources_present
+	fi
 
 	if [[ "$MODE" == "docker" ]]; then
-		log "building container image (${MODE} mode)..."
-		docker_build_up
+		log "acquiring container image (${MODE} mode)..."
+		ensure_docker_image
 	else
 		log "acquiring binary (${MODE} mode)..."
 		ensure_runtime_binary
 	fi
+
+	# persist AFTER acquisition so BINARY_SOURCE/INSTALLED_VERSION are real
+	save_state
 
 	if [[ "$MODE" == "docker" ]]; then
 		install_unit "$(render_template "$(gen_docker_wrapper_unit)")"
@@ -866,7 +930,7 @@ do_update() {
 
 	case "$MODE" in
 		docker)
-			git_pull_latest              # pick up Dockerfile/compose changes too
+			[[ ! -f "$APP_DIR/go.mod" ]] && { log "standalone install — refreshing project snapshot..."; bootstrap_app_dir; }
 			build_and_apply ;;
 		native)
 			if [[ "${BINARY_SOURCE:-}" == "release" ]]; then
@@ -883,7 +947,7 @@ do_update() {
 build_and_apply() {
 	log "rebuilding (${MODE} mode)..."
 	if [[ "$MODE" == "docker" ]]; then
-		docker_build_up
+		ensure_docker_image
 		service_exists && as_root systemctl try-restart "$SERVICE" 2>/dev/null || true
 	else
 		service_active && { log "stopping service for binary swap..."; as_root systemctl stop "$SERVICE"; }
@@ -918,8 +982,9 @@ do_remove() {
 	if [[ "${MODE:-}" == "docker" ]] && have docker && [[ -f "$APP_DIR/$COMPOSE_FILE_DEFAULT" ]]; then
 		if ui_yesno "Docker resources" "Also tear down the docker compose stack (containers + network)? Your bind-mounted data stays."; then
 			( cd "$APP_DIR" && docker compose --env-file "$STATE_ENV" -f "$COMPOSE_FILE_DEFAULT" down ) || true
-			if ui_yesno "Docker image" "Remove the built image grok-webui:local as well?"; then
-				docker rmi grok-webui:local >/dev/null 2>&1 || true
+			if ui_yesno "Docker image" "Remove the pulled/built image as well?"; then
+				docker rmi "ghcr.io/karutoil/grok-build-webui:latest" >/dev/null 2>&1 || true
+				docker rmi "${APP_NAME}:local" >/dev/null 2>&1 || true
 			fi
 		fi
 	fi
@@ -971,6 +1036,10 @@ do_status() {
 		printf 'binary:       %s (%s)\n' "$APP_DIR/$APP_NAME" "${BINARY_SOURCE:-unknown}${INSTALLED_VERSION:+, $INSTALLED_VERSION}"
 		printf 'release repo: %s\n' "${REPO:-<unset>}"
 	fi
+	if [[ "${STANDALONE:-0}" == "1" ]]; then
+		printf 'standalone:   yes (no git clone) — re-run or update anytime with:\n'
+		printf '              curl -fsSL %s/scripts/install.sh | bash\n' "$RAW_BASE"
+	fi
 	if service_exists; then
 		systemctl status "$SERVICE" --no-pager -l || true
 	else
@@ -994,6 +1063,9 @@ do_config() {
 	log "current settings shown as defaults — change what you need (Enter keeps them)."
 	collect_common_settings
 	save_state
+	if [[ "$MODE" == "docker" || -n "${FROM_SOURCE:-}" ]]; then
+		ensure_sources_present
+	fi
 	if [[ "$MODE" == "docker" ]]; then
 		# compose up -d recreates the container with the new env values
 		build_and_apply
@@ -1003,6 +1075,7 @@ do_config() {
 		install_unit "$(render_template "$(gen_native_unit)")"
 		restart_or_start_service
 	fi
+	save_state                              # persist any new version/source info
 	wait_healthy
 	ok "configuration applied."
 }

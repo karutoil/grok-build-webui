@@ -14,8 +14,10 @@ name: grok-webui
 
 services:
   webui:
+    # Pull the prebuilt CI image by default (fast); falls back to building
+    # locally when the registry is unreachable. Override via WEBUI_IMAGE=.env.
+    image: "${WEBUI_IMAGE:-ghcr.io/karutoil/grok-build-webui:latest}"
     build: .
-    image: grok-webui:local
     container_name: grok-webui
     init: true                       # reap orphaned PTY children
     restart: unless-stopped          # behave like a system service
