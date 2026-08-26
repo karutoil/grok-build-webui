@@ -20,14 +20,15 @@ when you close the pane or stop the service.
 ## Install
 
 ```sh
-git clone <your-fork-url>/grok-build-webui.git
+git clone https://github.com/karutoil/grok-build-webui.git
 cd grok-build-webui
 ./scripts/install.sh
 ```
 
 An interactive wizard takes it from there — every question shows its default,
-so pressing **Enter** through the prompts gives you a working install. Choose
-how it should run when asked:
+so pressing **Enter** through the prompts gives you a working install. It
+installs the **Grok Build CLI** for you if it's missing, then asks how the
+service should run:
 
 | Mode | What you get |
 |------|--------------|

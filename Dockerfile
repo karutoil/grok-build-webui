@@ -38,7 +38,7 @@ FROM alpine:3.21
 
 LABEL org.opencontainers.image.title="grok-build-webui" \
       org.opencontainers.image.description="Grok Build CLI session multiplexer (tabs + splits) with auth" \
-      org.opencontainers.image.source="https://github.com/your-org/grok-build-webui"
+      org.opencontainers.image.source="https://github.com/karutoil/grok-build-webui"
 
 # Tooling available inside grok PTY sessions. Trim or extend to taste —
 # anything under $HOME still comes from the host via the bind mount.

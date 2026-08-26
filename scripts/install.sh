@@ -36,8 +36,12 @@ UNIT="/etc/systemd/system/${SERVICE}.service"
 COMPOSE_FILE_DEFAULT="docker-compose.yml"
 
 # GitHub repo used for release downloads when not set another way
-# (--repo flag > GROK_WEBUI_REPO env > git remote origin > saved .env).
-DEFAULT_REPO=""
+# (--repo flag > GROK_WEBUI_REPO env > git remote origin > this default).
+DEFAULT_REPO="karutoil/grok-build-webui"
+
+# Official Grok Build CLI bootstrap script (embedded in the grok binary's
+# own help text). Used to provision grok when it is missing.
+GROK_INSTALL_URL="https://x.ai/cli/install.sh"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 APP_DIR="$(cd -- "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
@@ -217,6 +221,55 @@ stop_running_service() {
 		log "stopping running ${SERVICE}..."
 		as_root systemctl stop "$SERVICE"
 	fi
+}
+
+# ============================================================================
+# Grok Build CLI — detect, and bootstrap via the official installer if missing
+# ============================================================================
+
+detect_grok() { # sets GROK_PATH + GROK_VERSION globals ("" when absent)
+	local cand
+	for cand in "${HOME:-}/.grok/bin/grok" "$(command -v grok 2>/dev/null || true)"; do
+		if [[ -n "$cand" && -x "$cand" ]]; then
+			GROK_PATH="$cand"
+			GROK_VERSION="$("$cand" --version 2>/dev/null | head -1 || true)"
+			return 0
+		fi
+	done
+	GROK_PATH=""; GROK_VERSION=""
+	return 1
+}
+
+ensure_grok_cli() {
+	detect_grok && { ok "grok cli found: ${GROK_VERSION:-<unknown version>} at $GROK_PATH"; return 0; }
+
+	warn "the Grok Build CLI ('grok') is not installed — PTY sessions need it."
+	local proceed=1
+	if [[ "$FLAG_YES" == "1" ]]; then
+		log "auto-installing via official script (--yes mode)."
+	else
+		ui_yesno "Install Grok Build CLI?" \
+"'grok' is required to run sessions. Install it now via the official
+bootstrap script?
+
+    curl -fsSL ${GROK_INSTALL_URL} | bash" || proceed=0
+	fi
+
+	if [[ "$proceed" != "1" ]]; then
+		warn "skipping grok install — sessions will fail until you install it manually."
+		warn "later: curl -fsSL ${GROK_INSTALL_URL} | bash   then re-run 'config'."
+		return 1
+	fi
+
+	log "running official grok installer..."
+	have curl || die "curl is required to fetch the grok installer but was not found."
+	curl -fsSL "$GROK_INSTALL_URL" | bash || die "grok installer failed — install manually: see https://x.ai/cli"
+
+	# PATH may not include ~/.local/bin in this shell yet; detect explicitly
+	detect_grok || die "installer ran but 'grok' still not found at ~/.grok/bin/grok or on PATH.
+     Open a new shell and re-run this installer, or set GROK_BIN manually via 'config'."
+	ok "installed grok: ${GROK_VERSION:-ok} at $GROK_PATH"
+	return 0
 }
 
 # ============================================================================
@@ -534,8 +587,9 @@ WebAuthn RPID. Leave empty (just Enter) for LAN-only access:" "${PUBLIC_URL:-}")
 	fi
 	DATA_DIR="${DATA_DIR%/}"
 
-	# --- grok binary ---
-	local def_grok="${GROK_BIN:-$(command -v grok 2>/dev/null || echo grok)}"
+	# --- grok cli (required by sessions in every mode — auto-installed if missing) ---
+	ensure_grok_cli || true   # declining is allowed; sessions will fail until installed
+	local def_grok="${GROK_BIN:-${GROK_PATH:-grok}}"
 	if [[ "$FLAG_YES" == "1" ]]; then
 		GROK_BIN="$def_grok"
 	else
