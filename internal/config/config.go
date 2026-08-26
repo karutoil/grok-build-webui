@@ -21,11 +21,12 @@ type Config struct {
 	AllowRoot   string
 	MaxSessions int
 	CleanEnv    bool
+	Version     string
 	StartedAt   time.Time
 }
 
 func Load() *Config {
-	c := &Config{StartedAt: time.Now()}
+	c := &Config{StartedAt: time.Now(), Version: "dev"}
 	var publicURL string
 	var maxSessions int
 	flag.StringVar(&c.Addr, "addr", getEnv("GROK_WEBUI_ADDR", ":8080"), "listen address")

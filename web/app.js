@@ -2,29 +2,233 @@
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 
-const TERM_THEME = {
-  background: '#0b0b0e',
-  foreground: '#e8e8ea',
-  cursor: '#e8b931',
-  cursorAccent: '#0b0b0e',
-  selectionBackground: 'rgba(232,185,49,0.28)',
-  black: '#18181c',
-  red: '#f07178',
-  green: '#7fd99a',
-  yellow: '#e8b931',
-  blue: '#7aa2f7',
-  magenta: '#c792ea',
-  cyan: '#89ddff',
-  white: '#eeeff2',
-  brightBlack: '#5c5c64',
-  brightRed: '#ff8b90',
-  brightGreen: '#9be7b3',
-  brightYellow: '#f5d76e',
-  brightBlue: '#9bb8ff',
-  brightMagenta: '#ddb6f2',
-  brightCyan: '#b3ecff',
-  brightWhite: '#ffffff',
+// ---- UI themes --------------------------------------------------------------
+// The WebUI follows the Grok CLI theme (`ui.theme` in config.toml). Each entry
+// pairs an xterm palette with a data-theme slug styled in style.css.
+const THEMES = {
+  groknight: {
+    label: 'GrokNight',
+    term: {
+      background: '#0b0b0e',
+      foreground: '#e8e8ea',
+      cursor: '#e05fd0',
+      cursorAccent: '#0b0b0e',
+      selectionBackground: 'rgba(224,95,208,0.30)',
+      black: '#18181c',
+      red: '#f07178',
+      green: '#7fd99a',
+      yellow: '#e8b931',
+      blue: '#7aa2f7',
+      magenta: '#e05fd0',
+      cyan: '#89ddff',
+      white: '#eeeff2',
+      brightBlack: '#5c5c64',
+      brightRed: '#ff8b90',
+      brightGreen: '#9be7b3',
+      brightYellow: '#f5d76e',
+      brightBlue: '#9bb8ff',
+      brightMagenta: '#ef87e2',
+      brightCyan: '#b3ecff',
+      brightWhite: '#ffffff',
+    },
+  },
+  grokday: {
+    label: 'GrokDay',
+    term: {
+      background: '#f8f8f9',
+      foreground: '#33333b',
+      cursor: '#96218a',
+      cursorAccent: '#f8f8f9',
+      selectionBackground: 'rgba(179,43,165,0.24)',
+      black: '#3b3b44',
+      red: '#c12839',
+      green: '#12703a',
+      yellow: '#94670f',
+      blue: '#2c5cc5',
+      magenta: '#a4259a',
+      cyan: '#1d6e80',
+      white: '#d5d5db',
+      brightBlack: '#77777f',
+      brightRed: '#d33948',
+      brightGreen: '#23884b',
+      brightYellow: '#b0821a',
+      brightBlue: '#4070da',
+      brightMagenta: '#b83cab',
+      brightCyan: '#268296',
+      brightWhite: '#ffffff',
+    },
+  },
+  tokyonight: {
+    label: 'TokyoNight',
+    term: {
+      background: '#1a1b26',
+      foreground: '#c0caf5',
+      cursor: '#7aa2f7',
+      cursorAccent: '#1a1b26',
+      selectionBackground: 'rgba(122,162,247,0.30)',
+      black: '#15161e',
+      red: '#f7768e',
+      green: '#9ece6a',
+      yellow: '#e0af68',
+      blue: '#7aa2f7',
+      magenta: '#bb9af7',
+      cyan: '#7dcfff',
+      white: '#a9b1d6',
+      brightBlack: '#414868',
+      brightRed: '#ff7a93',
+      brightGreen: '#b9f27c',
+      brightYellow: '#ff9e64',
+      brightBlue: '#7da6ff',
+      brightMagenta: '#c9a9fc',
+      brightCyan: '#0db9d7',
+      brightWhite: '#c0caf5',
+    },
+  },
+  rosepine: {
+    label: 'Rosé Pine Moon',
+    term: {
+      background: '#232136',
+      foreground: '#e0def4',
+      cursor: '#c4a7e7',
+      cursorAccent: '#232136',
+      selectionBackground: 'rgba(235,188,186,0.28)',
+      black: '#393552',
+      red: '#eb6f92',
+      green: '#31748f',
+      yellow: '#f6c177',
+      blue: '#9ccfd8',
+      magenta: '#c4a7e7',
+      cyan: '#ebbcba',
+      white: '#e0def4',
+      brightBlack: '#6e6a86',
+      brightRed: '#eb6f92',
+      brightGreen: '#31748f',
+      brightYellow: '#f6c177',
+      brightBlue: '#9ccfd8',
+      brightMagenta: '#c4a7e7',
+      brightCyan: '#ebbcba',
+      brightWhite: '#e0def4',
+    },
+  },
+  oscura: {
+    label: 'Oscura Midnight',
+    term: {
+      background: '#0f0d19',
+      foreground: '#e6e3f2',
+      cursor: '#a78bfa',
+      cursorAccent: '#0f0d19',
+      selectionBackground: 'rgba(167,139,250,0.30)',
+      black: '#1b1829',
+      red: '#ee6d85',
+      green: '#6fdc9e',
+      yellow: '#dcb879',
+      blue: '#8aa6fa',
+      magenta: '#c792ea',
+      cyan: '#84dcec',
+      white: '#e8e6f2',
+      brightBlack: '#655e7e',
+      brightRed: '#ff8b9e',
+      brightGreen: '#93e6b4',
+      brightYellow: '#ecd08d',
+      brightBlue: '#a7c0ff',
+      brightMagenta: '#c4a7e7',
+      brightCyan: '#a9e9f7',
+      brightWhite: '#ffffff',
+    },
+  },
 };
+
+const DEFAULT_THEME = 'groknight';
+
+function canonThemeName(v) {
+  const k = String(v ?? '').toLowerCase().replace(/[\s_-]/g, '');
+  const map = {
+    dark: 'groknight', night: 'groknight', default: DEFAULT_THEME,
+    light: 'grokday', day: 'grokday',
+    tokyo: 'tokyonight', tokyonight: 'tokyonight',
+    rosepine: 'rosepine', rosepinemoon: 'rosepine',
+    oscura: 'oscura', oscuramidnight: 'oscura',
+  };
+  if (THEMES[k]) return k;
+  if (map[k]) return map[k];
+  if (/light|day/.test(k)) return 'grokday';
+  return DEFAULT_THEME;
+}
+
+// Everything needed to resolve the active look. Cached config comes from
+// GET /api/settings/grok/theme; the WebUI override lives in ui_prefs.uiTheme.
+const themeCtl = {
+  conf: null,
+  active: null,
+  prefersDark: window.matchMedia('(prefers-color-scheme: dark)'),
+};
+
+function currentTermTheme() {
+  return (THEMES[themeCtl.active] || THEMES[DEFAULT_THEME]).term;
+}
+
+async function fetchGrokThemeConf() {
+  try { return await api('/api/settings/grok/theme'); } catch { return null; }
+}
+
+function resolveActiveTheme() {
+  const override = state.prefs && state.prefs.uiTheme;
+  if (override && override !== 'follow') return canonThemeName(override);
+  const c = themeCtl.conf || {};
+  const mode = String(c.theme || '').trim().toLowerCase();
+  if (!c.exists) return DEFAULT_THEME;
+  if (mode === 'auto' || mode === 'system') {
+    // Mirrors the CLI: auto_dark_theme/auto_light_theme with GrokNight/GrokDay fallbacks.
+    const pick = themeCtl.prefersDark.matches ? (c.auto_dark_theme || DEFAULT_THEME) : (c.auto_light_theme || 'grokday');
+    return canonThemeName(pick);
+  }
+  if (!mode) return DEFAULT_THEME; // unset -> CLI default theme
+  return canonThemeName(mode);
+}
+
+function applyUITheme(slug) {
+  if (!THEMES[slug]) slug = DEFAULT_THEME;
+  const changed = document.documentElement.dataset.theme !== slug || themeCtl.active !== slug;
+  themeCtl.active = slug;
+  if (changed) {
+    document.documentElement.dataset.theme = slug;
+    try { localStorage.setItem('gbw.theme', slug); } catch {}
+    const term = currentTermTheme();
+    for (const id of Object.keys(state.panes)) {
+      try { state.panes[id].term.options.theme = term; } catch {}
+    }
+  }
+  return changed;
+}
+
+let themeInflight = false;
+async function refreshUITheme() {
+  if (themeInflight) return;
+  themeInflight = true;
+  try {
+    const conf = await fetchGrokThemeConf();
+    if (conf) themeCtl.conf = conf;
+    applyUITheme(resolveActiveTheme());
+  } finally {
+    themeInflight = false;
+  }
+}
+
+function startThemeSync() {
+  // Poll like the CLI's auto mode does (~5s) so /theme typed inside a running
+  // session retints the whole WebUI without saving anything in Settings.
+  let last = performance.now();
+  setInterval(() => {
+    if (document.hidden) return;
+    const now = performance.now();
+    if (now - last < 3000) return;
+    last = now;
+    refreshUITheme();
+  }, 5000);
+  window.addEventListener('focus', refreshUITheme);
+  try { themeCtl.prefersDark.addEventListener('change', refreshUITheme); } catch {}
+}
+
 
 const ICONS = {
   splitRight: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>',
@@ -49,6 +253,16 @@ const state = {
   creating: false,
   prefs: {},
 };
+
+// Restore the last active theme before first paint so reloads don't flash
+// the default palette; the server config is re-synced right after boot.
+try {
+  const cached = localStorage.getItem('gbw.theme');
+  if (cached && THEMES[cached]) {
+    document.documentElement.dataset.theme = cached;
+    themeCtl.active = cached;
+  }
+} catch {}
 
 function toast(text, kind = '') {
   const host = $('#toasts');
@@ -853,7 +1067,7 @@ function attachOne(id) {
     cursorBlink: true,
     fontSize: Number(state.prefs.font) || 13,
     fontFamily: 'SF Mono, Cascadia Code, JetBrains Mono, ui-monospace, Menlo, Consolas, monospace',
-    theme: TERM_THEME,
+    theme: currentTermTheme(),
     scrollback: Number(state.prefs.scrollback) || 5000,
     allowProposedApi: true,
   });
@@ -1119,9 +1333,12 @@ function applyPrefsToForm(p) {
   $('#pref-font').value = p.font || 13;
   $('#pref-scrollback').value = p.scrollback || 5000;
   $('#pref-copy-select').checked = !!p.copyOnSelect;
+  const uiTheme = $('#pref-ui-theme');
+  if (uiTheme) uiTheme.value = THEMES[p.uiTheme] ? p.uiTheme : 'follow';
 }
 
 function readPrefsFromForm() {
+  const uiTheme = $('#pref-ui-theme');
   return {
     model: $('#pref-model').value.trim(),
     permission: $('#pref-permission').value,
@@ -1130,6 +1347,7 @@ function readPrefsFromForm() {
     font: Number($('#pref-font').value) || 13,
     scrollback: Number($('#pref-scrollback').value) || 5000,
     copyOnSelect: $('#pref-copy-select').checked,
+    uiTheme: uiTheme && THEMES[uiTheme.value] ? uiTheme.value : 'follow',
   };
 }
 
@@ -1148,6 +1366,7 @@ function openSettings() {
     applyPrefsToForm(state.prefs);
     if (s.locked) msg($('#settings-msg'), 'Public URL is locked by GROK_WEBUI_PUBLIC_URL', true);
   }).catch(() => {});
+  loadVersion(false);
   if (window.GrokSettings) {
     window.GrokSettings.load().catch(e => {
       const el = $('#grok-msg');
@@ -1155,6 +1374,59 @@ function openSettings() {
     });
   }
   loadPasskeys();
+}
+
+// ---- version indicator -----------------------------------------------------
+
+const VER_LABEL = {
+  up_to_date: 'up to date',
+  out_of_date: 'update available',
+  local_build: 'local build',
+  unknown: 'status unknown',
+};
+
+function renderVersion(v) {
+  const badge = $('#version-badge');
+  const text = $('#version-text');
+  if (!badge || !text) return;
+  badge.classList.remove('ok', 'out', 'local', 'unknown');
+  const st = v.status || 'unknown';
+  badge.classList.add(
+    st === 'up_to_date' ? 'ok' :
+    st === 'out_of_date' ? 'out' :
+    st === 'local_build' ? 'local' : 'unknown');
+  let label = VER_LABEL[st] || VER_LABEL.unknown;
+  if (st === 'out_of_date') {
+    label += `: ${v.latest} (running ${v.version})`;
+  } else if (st === 'local_build') {
+    label += ` ${v.version} — newer than or ahead of releases`;
+  } else if (st === 'up_to_date') {
+    label = `${v.latest} · up to date`;
+  }
+  text.textContent = label;
+  if (v.checked_at) {
+    text.title = `Last checked ${new Date(v.checked_at).toLocaleString()}`;
+  } else {
+    text.removeAttribute('title');
+  }
+}
+
+async function loadVersion(force) {
+  const btn = $('#btn-check-version');
+  try {
+    if (btn) { btn.disabled = true; }
+    const v = await api(`/api/settings/version${force ? '?refresh=1' : ''}`);
+    renderVersion(v);
+    const link = $('#ver-releases-link');
+    if (link && v.releases_url) link.href = v.releases_url;
+  } catch (_) {
+    const badge = $('#version-badge');
+    if (badge) { badge.className = 'ver-badge unknown'; }
+    const text = $('#version-text');
+    if (text) text.textContent = 'status unavailable';
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 function closeSettings() {
   if (window.GrokSettings && window.GrokSettings.isDirty() && !confirm('Discard unsaved Grok config changes?')) return;
@@ -1164,6 +1436,7 @@ function openHelp() { $('#help-overlay').classList.remove('hidden'); }
 function closeHelp() { $('#help-overlay').classList.add('hidden'); }
 
 $('#btn-settings').onclick = openSettings;
+$('#btn-check-version')?.addEventListener('click', () => loadVersion(true));
 $('#btn-close-settings').onclick = closeSettings;
 $('#btn-close-help').onclick = closeHelp;
 $('#settings-overlay').addEventListener('click', (e) => { if (e.target.id === 'settings-overlay') closeSettings(); });
@@ -1175,6 +1448,8 @@ $('#btn-save-prefs').onclick = async () => {
     const s = await api('/api/settings', { method: 'PUT', body: JSON.stringify({ prefs }) });
     state.prefs = (s && s.prefs) || prefs;
     msg($('#prefs-msg'), 'Preferences saved. New terminals and sessions pick them up.', true);
+    if (state.prefs.uiTheme === 'follow') await refreshUITheme();
+    else applyUITheme(canonThemeName(state.prefs.uiTheme));
   } catch (e) {
     msg($('#prefs-msg'), e.message);
   }
@@ -1653,9 +1928,18 @@ async function initApp() {
     state.prefs = s.prefs || {};
     startedAt = s.started_at || null;
   } catch {}
+  // Re-resolve now that prefs (possible pin override) are known, then keep
+  // following config.toml for the lifetime of the page.
+  await refreshUITheme();
+  startThemeSync();
   if (window.GrokSettings) window.GrokSettings.init();
   await loadProjects();
   if (startedAt) maybeShowRestoreBanner(startedAt);
 }
+
+// Hook used by settings.js to resync right after saving/reverting config.toml.
+window.GrokBuildTheme = {
+  refresh: refreshUITheme,
+};
 
 initApp();

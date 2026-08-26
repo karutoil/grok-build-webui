@@ -628,6 +628,8 @@
       el.textContent = 'Saved. New Grok sessions will use this config.';
       el.className = 'msg ok';
       renderCurrent();
+      // Saving config.toml can change ui.theme; retint the WebUI right away.
+      if (window.GrokBuildTheme) window.GrokBuildTheme.refresh();
     } catch (e) {
       el.textContent = e.message || String(e);
       el.className = 'msg error';
@@ -655,7 +657,7 @@
     $('#btn-save-grok').onclick = save;
     $('#btn-revert-grok').onclick = async () => {
       if (state.dirty && !confirm('Discard unsaved Grok config changes?')) return;
-      try { await load(); } catch (e) { toastLocal(e.message); }
+      try { await load(); if (window.GrokBuildTheme) window.GrokBuildTheme.refresh(); } catch (e) { toastLocal(e.message); }
     };
     $('#grok-raw').addEventListener('input', () => {
       if (!state.work) return;

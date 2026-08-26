@@ -4,6 +4,11 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Grok Build</title>
+<script>
+  // Apply the cached WebUI theme before first paint to avoid a flash of the
+  // default palette; app.js re-syncs it against config.toml shortly after.
+  try { var __t = localStorage.getItem('gbw.theme'); if (__t) document.documentElement.dataset.theme = __t; } catch (e) {}
+</script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230c0c0e'/%3E%3Cpath d='M8 22V10h3.2l4.8 8.4L20.8 10H24v12h-2.4v-7.6L17.2 22h-2.4l-4.4-7.6V22H8z' fill='%23f4c025'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="/vendor/xterm.min.css" />
 <link rel="stylesheet" href="/style.css" />
@@ -175,6 +180,32 @@
               </div>
               <div id="settings-msg" class="msg"></div>
               <p class="muted small meta-line">RP ID <code id="rpid-display">-</code> · binary <code id="grok-bin-display">grok</code> · max PTYs <code id="max-sessions-display">16</code> · running <code id="running-display">0</code></p>
+            </section>
+            <section>
+              <h3>Version</h3>
+              <p class="muted small">Running build compared against the latest published release.</p>
+              <div class="row ver-row">
+                <span id="version-badge" class="ver-badge"><span class="ver-dot"></span><span id="version-text" class="ver-text">checking…</span></span>
+                <button id="btn-check-version" class="secondary">Check now</button>
+              </div>
+              <p class="muted small meta-line">Update via <code>./scripts/install.sh update</code> or the <a id="ver-releases-link" href="#" target="_blank" rel="noopener">releases page</a>.</p>
+            </section>
+            <section>
+              <h3>Appearance</h3>
+              <p class="muted small">The UI follows your Grok theme (<code>ui.theme</code> in <code>config.toml</code> — switch it with <code>/theme</code> in any session) and keeps following it as it changes. Pin a specific look here if you prefer.</p>
+              <div class="grid-2">
+                <label>UI theme
+                  <select id="pref-ui-theme">
+                    <option value="follow">Follow Grok theme</option>
+                    <option value="groknight">GrokNight (dark)</option>
+                    <option value="grokday">GrokDay (light)</option>
+                    <option value="tokyonight">TokyoNight</option>
+                    <option value="rosepine">Rosé Pine Moon</option>
+                    <option value="oscura">Oscura Midnight</option>
+                  </select>
+                </label>
+              </div>
+              <p class="muted small meta-line">Save preferences below to apply a pinned theme.</p>
             </section>
             <section>
               <h3>Launch defaults</h3>

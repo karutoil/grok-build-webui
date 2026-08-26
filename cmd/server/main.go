@@ -25,6 +25,7 @@ var version = "dev"
 
 func main() {
 	cfg := config.Load()
+	cfg.Version = version
 	log.Printf("starting grok-build-webui %s data=%s grok=%s public_url=%s", cfg.Addr, cfg.DataDir, cfg.GrokBin, cfg.PublicURL)
 	log.Printf("version %s", version)
 
@@ -93,6 +94,8 @@ func main() {
 	protected.HandleFunc("GET /api/settings", settingsH.Get)
 	protected.HandleFunc("PUT /api/settings", settingsH.Update)
 	protected.HandleFunc("GET /api/settings/grok", settingsH.GetGrok)
+	protected.HandleFunc("GET /api/settings/version", settingsH.Version)
+	protected.HandleFunc("GET /api/settings/grok/theme", settingsH.GetGrokTheme)
 	protected.HandleFunc("PUT /api/settings/grok", settingsH.UpdateGrok)
 
 	mux.Handle("/api/auth/logout", authMiddleware(authSvc, protected))
