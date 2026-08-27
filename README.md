@@ -12,6 +12,7 @@ when you close the pane or stop the service.
 - Terminal-per-tab with horizontal/vertical splits (xterm.js); replays the last 256 KB on reconnect
 - Auth: password (bcrypt) + passkeys/WebAuthn + JWT httpOnly cookie
 - Projects are absolute paths on your machine — anything you can reach, you can grok
+- Settings → Models/Providers can **fetch the live model list from any provider base URL**, then prefill name, context/output limits and reasoning support for the picked model from [models.dev](https://models.dev)
 - Single static Go binary + SQLite — no Node, no external services
 - Ships with a service installer: **systemd or docker compose**, up on boot, restarts on crash
 

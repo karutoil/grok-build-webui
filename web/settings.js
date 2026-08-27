@@ -267,6 +267,17 @@
     add.appendChild(idInput);
     add.appendChild(tpl);
     add.appendChild(btn);
+    if (col.id === 'models' || col.id === 'providers') {
+      const fetchBtn = document.createElement('button');
+      fetchBtn.type = 'button';
+      fetchBtn.className = 'small';
+      fetchBtn.textContent = 'Fetch from API…';
+      fetchBtn.title = col.id === 'models'
+        ? 'List the models a provider serves, pick one, and prefill defaults from models.dev'
+        : 'Check which models a base URL serves while adding a provider';
+      fetchBtn.onclick = () => openCatalogModal(col);
+      add.appendChild(fetchBtn);
+    }
     wrap.appendChild(add);
 
     const bag = state.work.collections[col.id];
@@ -289,26 +300,32 @@
   }
 
   function addItem(col, id, template) {
-    const bag = state.work.collections[col.id];
-    if (bag.items[id] && !bag.deleted.includes(id)) {
+    if (!createCollectionItem(col, id, template && template.values)) {
       toastLocal('That id already exists');
       return;
     }
+    renderGrok();
+  }
+
+  // Shared by template adds and the fetch-from-API flow. Seed values are
+  // applied as "Set" on top of the blank field map; returns false when the id
+  // is already live.
+  function createCollectionItem(col, id, seedValues) {
+    const bag = state.work.collections[col.id];
+    if (bag.items[id] && !bag.deleted.includes(id)) return false;
     bag.deleted = bag.deleted.filter(x => x !== id);
     const fmap = {};
     for (const f of col.item_fields) {
       fmap[f.key] = { set: false, value: clone(f.default ?? null) };
     }
-    if (template && template.values) {
-      for (const [k, v] of Object.entries(template.values)) {
-        fmap[k] = { set: true, value: clone(v) };
-      }
+    for (const [k, v] of Object.entries(seedValues || {})) {
+      fmap[k] = { set: true, value: clone(v) };
     }
     bag.items[id] = { fields: fmap, extra: [] };
     if (!bag.order.includes(id)) bag.order.push(id);
     state.expanded[col.id + ':' + id] = true;
     markDirty();
-    renderGrok();
+    return true;
   }
 
   function renderItem(col, id) {
@@ -385,6 +402,20 @@
       }));
     }
     body.appendChild(list);
+
+    if (col.id === 'models') {
+      const foot = document.createElement('div');
+      foot.className = 'gcard-foot';
+      const pick = document.createElement('button');
+      pick.type = 'button';
+      pick.className = 'small';
+      pick.textContent = 'Pick model from API…';
+      pick.title = 'Fetch the model list from this entry’s base URL, or look up defaults on models.dev';
+      pick.onclick = () => openCatalogModal(col, id);
+      foot.appendChild(pick);
+      body.appendChild(foot);
+    }
+
     card.appendChild(head);
     card.appendChild(body);
     return card;
@@ -521,6 +552,302 @@
     wrap.appendChild(control);
     wrap.appendChild(actions);
     return wrap;
+  }
+
+  // ---- Fetch models from a provider, prefill defaults from models.dev ----
+
+  let catalogModal = null;
+
+  function closeCatalogModal() {
+    if (!catalogModal) return;
+    window.removeEventListener('keydown', catalogModal.onKey, true);
+    catalogModal.el.remove();
+    catalogModal = null;
+  }
+
+  function slugifyId(s, fallback) {
+    const out = String(s || '').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
+    return out || fallback;
+  }
+
+  function hostSlug(u) {
+    try {
+      const labels = new URL(u).hostname.split('.');
+      const generic = new Set(['com', 'net', 'org', 'io', 'ai', 'dev', 'app', 'co', 'cloud', 'us', 'eu']);
+      for (let i = labels.length - 1; i >= 0; i--) {
+        const l = labels[i];
+        if (l && !generic.has(l) && l !== 'api' && l !== 'www') return slugifyId(l, '');
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  function uniqueCollectionId(col, base) {
+    const bag = state.work.collections[col.id];
+    let id = base || 'entry';
+    if (!(bag.items[id] && !bag.deleted.includes(id))) return id;
+    let n = 2;
+    while (bag.items[id + '-' + n] && !bag.deleted.includes(id + '-' + n)) n++;
+    return id + '-' + n;
+  }
+
+  function fmtTokens(n) {
+    n = Number(n) || 0;
+    if (!n) return '';
+    if (n >= 1000) return Math.round(n / 1000) + 'k';
+    return String(n);
+  }
+
+  function devChips(info) {
+    if (!info) return '';
+    const bits = [];
+    const ctx = fmtTokens(info.context_window);
+    const out = fmtTokens(info.max_output_tokens);
+    if (ctx) bits.push(`context ${ctx}`);
+    if (out) bits.push(`output ${out}`);
+    if (info.reasoning_efforts && info.reasoning_efforts.length) bits.push(`reasoning ${info.reasoning_efforts.join('/')}`);
+    else if (info.reasoning) bits.push('reasoning');
+    return bits.join(' · ');
+  }
+
+  // Fill unset config fields from a models.dev match. Only touches keys that
+  // exist in this collection's schema and are not already Set.
+  function applyInfoDefaults(itemFields, info, opts = {}) {
+    if (!info) return [];
+    const filled = [];
+    const trySet = (key, val) => {
+      const slot = itemFields[key];
+      if (!slot || slot.set || val == null || val === '') return;
+      slot.set = true;
+      slot.value = clone(val);
+      filled.push(key);
+    };
+    trySet('name', info.model_name);
+    trySet('context_window', info.context_window > 0 ? Number(info.context_window) : null);
+    trySet('max_completion_tokens', info.max_output_tokens > 0 ? Number(info.max_output_tokens) : null);
+    if (info.reasoning) {
+      trySet('supports_reasoning_effort', true);
+      if (info.reasoning_efforts && info.reasoning_efforts.length) trySet('reasoning_efforts', info.reasoning_efforts.slice());
+    }
+    if (opts.fillBaseUrl) trySet('base_url', opts.fillBaseUrl);
+    return filled;
+  }
+
+  function notify(msg, ok) {
+    if (typeof toast === 'function') toast(msg, ok ? 'ok' : 'error');
+    else toastLocal(msg);
+  }
+
+  function openCatalogModal(col, targetId) {
+    closeCatalogModal();
+    const bag = state.work.collections[col.id];
+    const editing = targetId ? bag.items[targetId] : null;
+
+    const el = document.createElement('div');
+    el.className = 'overlay';
+    el.innerHTML = `
+      <div class="modal mfetch-modal">
+        <div class="modal-head">
+          <h2>${col.id === 'models'
+            ? (editing ? `Pick model for “${esc(targetId)}”` : 'Add model from provider')
+            : 'Check a provider endpoint'}</h2>
+          <button type="button" class="icon-btn" aria-label="Close" data-mclose>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </button>
+        </div>
+        <p class="muted small">Reads the OpenAI-compatible <code>/models</code> list of any base URL you enter${col.id === 'providers' ? '' : ', lets you pick a model, and prefills name, context/output limits, and reasoning support from'} ${col.id === 'providers' ? '' : '<code>models.dev</code>'}. The API key is used for this request only and never stored.</p>
+        <label>Base URL<input data-murl placeholder="https://api.example.com/v1" spellcheck="false" /></label>
+        <div class="mfetch-row">
+          <label class="grow">API key (optional)<input data-mkey type="password" autocomplete="off" placeholder="used for this lookup only" spellcheck="false" /></label>
+          <button type="button" class="small" data-mshow>Show</button>
+        </div>
+        <label>API backend
+          <select data-mbackend>
+            <option value="">auto</option>
+            <option value="chat_completions">chat_completions</option>
+            <option value="responses">responses</option>
+            <option value="messages">messages (Anthropic)</option>
+          </select>
+        </label>
+        <div class="row">
+          <button type="button" class="primary small" data-mfetch>Fetch models</button>
+          <span class="msg grow" data-mstatus></span>
+        </div>
+        <div data-mresults hidden>
+          <input data-mfilter placeholder="Filter…" autocomplete="off" />
+          <select data-msel size="10"></select>
+        </div>
+        <p class="muted small mdevinfo" data-minfo hidden></p>
+        <div class="row end mfoot">
+          <button type="button" class="small" data-mcancel>Cancel</button>
+          <button type="button" class="primary small" data-mapply disabled>${editing ? 'Update model' : (col.id === 'providers' ? 'Add provider' : 'Add model')}</button>
+        </div>
+      </div>`;
+
+    const q = (sel) => el.querySelector(sel);
+    const urlInp = q('[data-murl]');
+    const keyInp = q('[data-mkey]');
+    const backendSel = q('[data-mbackend]');
+    const statusEl = q('[data-mstatus]');
+    const resultsWrap = q('[data-mresults]');
+    const filterInp = q('[data-mfilter]');
+    const selEl = q('[data-msel]');
+    const infoLine = q('[data-minfo]');
+    const fetchBtn = q('[data-mfetch]');
+    const applyBtn = q('[data-mapply]');
+
+    let fetched = [];
+    let info = null;
+
+    if (editing) {
+      if (editing.fields.base_url && editing.fields.base_url.set) urlInp.value = editing.fields.base_url.value || '';
+      if (editing.fields.api_backend && editing.fields.api_backend.set) backendSel.value = editing.fields.api_backend.value || '';
+    }
+
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeCatalogModal();
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    catalogModal = { el, onKey };
+    document.body.appendChild(el);
+
+    el.addEventListener('click', (e) => {
+      if (e.target === el) closeCatalogModal();
+    });
+    q('[data-mclose]').onclick = () => closeCatalogModal();
+    q('[data-mcancel]').onclick = () => closeCatalogModal();
+
+    q('[data-mshow]').onclick = (e) => {
+      keyInp.type = keyInp.type === 'password' ? 'text' : 'password';
+      e.target.textContent = keyInp.type === 'password' ? 'Show' : 'Hide';
+    };
+
+    function setStatus(text, ok) {
+      statusEl.textContent = text || '';
+      statusEl.className = 'msg grow' + (ok ? ' ok' : text ? ' error' : '');
+    }
+
+    function rebuildOptions(flt) {
+      const f = flt.trim().toLowerCase();
+      selEl.innerHTML = '';
+      for (const m of fetched) {
+        if (f && !m.id.toLowerCase().includes(f) && !(m.name || '').toLowerCase().includes(f)) continue;
+        const o = document.createElement('option');
+        o.value = m.id;
+        o.textContent = m.name && m.name !== m.id ? `${m.id} — ${m.name}` : m.id;
+        selEl.appendChild(o);
+      }
+    }
+
+    async function loadDevInfo(modelId) {
+      info = null;
+      applyBtn.disabled = !selEl.value;
+      if (!modelId) { infoLine.hidden = true; return; }
+      try {
+        const resp = await window.api('/api/settings/grok/model-info', {
+          method: 'POST',
+          body: JSON.stringify({ model_id: modelId }),
+        });
+        if ((catalogModal && catalogModal.el !== el) || selEl.value !== modelId) return;
+        info = resp.best || null;
+        infoLine.hidden = false;
+        infoLine.innerHTML = info
+          ? `<strong>${esc(info.model_name || modelId)}</strong> · ${esc(devChips(info))}${info.provider_env_var ? ` · suggested env var <code>${esc(info.provider_env_var)}</code>` : ''}`
+          : `${esc(modelId)} isn’t in the models.dev catalog — limits and reasoning stay unset.`;
+      } catch (e) {
+        infoLine.hidden = false;
+        infoLine.textContent = 'models.dev lookup failed: ' + (e.message || e);
+      }
+    }
+
+    fetchBtn.onclick = async () => {
+      const baseVal = urlInp.value.trim();
+      if (!baseVal) { urlInp.focus(); setStatus('Enter a base URL first'); return; }
+      setStatus('Fetching…');
+      resultsWrap.hidden = true;
+      infoLine.hidden = true;
+      applyBtn.disabled = true;
+      fetchBtn.disabled = true;
+      fetchBtn.textContent = 'Fetching…';
+      try {
+        const resp = await window.api('/api/settings/grok/fetch-models', {
+          method: 'POST',
+          body: JSON.stringify({
+            base_url: baseVal,
+            api_key: keyInp.value.trim(),
+            api_backend: backendSel.value,
+          }),
+        });
+        fetched = resp.models || [];
+        if (!fetched.length) throw new Error('the endpoint returned no models');
+        rebuildOptions('');
+        resultsWrap.hidden = false;
+        if (col.id === 'providers') applyBtn.disabled = false; // picking a model is optional here
+        setStatus(`Found ${fetched.length} model${fetched.length === 1 ? '' : 's'} at ${resp.url || baseVal}`, true);
+        selEl.focus();
+      } catch (e) {
+        setStatus(e.message || String(e), false);
+      } finally {
+        fetchBtn.disabled = false;
+        fetchBtn.textContent = 'Fetch models';
+      }
+    };
+
+    filterInp.oninput = () => rebuildOptions(filterInp.value);
+    selEl.onchange = () => loadDevInfo(selEl.value);
+
+    applyBtn.onclick = () => {
+      const chosen = selEl.value;
+      if (!chosen) { setStatus('Select a model first'); return; }
+      const baseVal = urlInp.value.trim();
+
+      if (col.id === 'providers') {
+        const pid = uniqueCollectionId(col, hostSlug(baseVal));
+        if (!createCollectionItem(col, pid, { api_base_url: baseVal })) {
+          notify(`Provider id “${pid}” already exists`, false);
+          return;
+        }
+        renderGrok();
+        closeCatalogModal();
+        notify(`Added provider “${pid}” serving ${fetched.length}+ models`, true);
+        return;
+      }
+
+      if (editing) {
+        editing.fields.model = { set: true, value: chosen };
+        const filled = applyInfoDefaults(editing.fields, info, { fillBaseUrl: baseVal });
+        markDirty();
+        renderGrok();
+        closeCatalogModal();
+        notify(`Updated “${targetId}” to ${chosen}` + (filled.length ? ` — filled ${filled.join(', ')}` : ''), true);
+        return;
+      }
+
+      const nid = uniqueCollectionId(col, slugifyId(chosen, 'model'));
+      const seed = { model: chosen };
+      if (baseVal) seed.base_url = baseVal;
+      if (!createCollectionItem(col, nid, seed)) {
+        notify(`Model id “${nid}” already exists`, false);
+        return;
+      }
+      const created = state.work.collections[col.id].items[nid];
+      applyInfoDefaults(created.fields, info, {});
+      renderGrok();
+      closeCatalogModal();
+      const chips = devChips(info);
+      notify(`Added “${nid}”` + (chips ? ` — ${chips}` : ''), true);
+    };
+
+    if (editing && urlInp.value) {
+      // Prefill convenience: the caller likely wants this URL's list right away.
+      fetchBtn.click();
+    } else {
+      urlInp.focus();
+    }
   }
 
   function renderCurrent() {

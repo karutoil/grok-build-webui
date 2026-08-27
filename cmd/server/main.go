@@ -97,6 +97,8 @@ func main() {
 	protected.HandleFunc("GET /api/settings/version", settingsH.Version)
 	protected.HandleFunc("GET /api/settings/grok/theme", settingsH.GetGrokTheme)
 	protected.HandleFunc("PUT /api/settings/grok", settingsH.UpdateGrok)
+	protected.HandleFunc("POST /api/settings/grok/fetch-models", settingsH.FetchModels)
+	protected.HandleFunc("POST /api/settings/grok/model-info", settingsH.ModelInfo)
 
 	mux.Handle("/api/auth/logout", authMiddleware(authSvc, protected))
 	mux.Handle("/api/auth/refresh", authMiddleware(authSvc, protected))

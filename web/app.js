@@ -1151,6 +1151,11 @@ function wireWS(id, ws) {
         p.closed = true;
         p.term.writeln('\r\n\x1b[31m[session exited]\x1b[0m');
         markSession(id, 'exited');
+      } else if (m.type === 'sync') {
+        // Replay finished: refit against current geometry and land the
+        // viewport on live output instead of stale replayed scrollback.
+        try { p.fit.fit(); } catch {}
+        p.term.scrollToBottom();
       } else if (m.type === 'error') {
         p.term.writeln(`\r\n\x1b[31m[error: ${m.error || 'unknown'}]\x1b[0m`);
       } else if (m.type === 'pong') { /* keepalive */ }

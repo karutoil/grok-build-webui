@@ -58,6 +58,7 @@ type Session struct {
 	Cmd            *exec.Cmd
 	Pty            *os.File
 	Buffer         *RingBuffer
+	Modes          *ModeTracker
 	Clients        map[string]chan []byte
 	clientsMu      sync.Mutex
 	exitCode       int
@@ -169,6 +170,7 @@ func (m *Manager) Create(projectID, projectPath string, opts CreateOpts) (*Sessi
 		Cmd:            cmd,
 		Pty:            ptmx,
 		Buffer:         NewRingBuffer(256 * 1024),
+		Modes:          NewModeTracker(),
 		Clients:        make(map[string]chan []byte),
 		done:           make(chan struct{}),
 	}
@@ -282,9 +284,7 @@ func (m *Manager) ioLoop(s *Session) {
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			_, _ = s.Buffer.Write(data)
-			s.touch()
-			s.broadcast(data)
+			s.emit(data)
 		}
 		if err != nil {
 			if err != io.EOF {
@@ -344,9 +344,16 @@ func (s *Session) IsRunning() bool {
 	return s.Status == "running"
 }
 
-func (s *Session) broadcast(data []byte) {
+// emit records a PTY chunk into the scrollback and fans it out to live
+// clients under a single critical section. Holding clientsMu across both
+// steps makes attaching atomic (see AttachClient): a new client either has
+// the chunk already inside its history snapshot, or receives it on its
+// channel — never both, never neither.
+func (s *Session) emit(data []byte) {
 	s.clientsMu.Lock()
 	defer s.clientsMu.Unlock()
+	_, _ = s.Buffer.Write(data)
+	s.Modes.Write(data)
 	for _, ch := range s.Clients {
 		payload := append([]byte(nil), data...)
 		select {
@@ -535,7 +542,23 @@ func (m *Manager) AttachClient(sessionID string) (chan []byte, func(), []byte, b
 	}
 	ch := make(chan []byte, 256)
 	id := uuid.NewString()
+
+	// Snapshot the history and register the live channel in one critical
+	// section. emit() also runs under clientsMu, so every PTY chunk is
+	// either fully contained in this snapshot or arrives on the channel
+	// afterwards. Without this, a reconnect could duplicate bytes (chunk
+	// both in history and queued live) or drop them (registered after the
+	// broadcast but before the snapshot).
 	s.clientsMu.Lock()
+	var history []byte
+	if prefix := s.Modes.Prefix(); len(prefix) > 0 {
+		replay := s.Buffer.ReplayBytes()
+		history = make([]byte, 0, len(prefix)+len(replay))
+		history = append(history, prefix...)
+		history = append(history, replay...)
+	} else {
+		history = s.Buffer.ReplayBytes()
+	}
 	s.Clients[id] = ch
 	s.clientsMu.Unlock()
 
@@ -546,7 +569,6 @@ func (m *Manager) AttachClient(sessionID string) (chan []byte, func(), []byte, b
 		}
 	}
 
-	history := s.Buffer.ReplayBytes()
 	remove := func() {
 		s.clientsMu.Lock()
 		delete(s.Clients, id)

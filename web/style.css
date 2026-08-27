@@ -533,6 +533,26 @@ select:focus { border-color: var(--accent-dim); box-shadow: 0 0 0 3px var(--acce
 .add-row input, .add-row select { min-width: 140px; }
 .gempty { color: var(--muted); padding: 12px 0; }
 
+/* Fetch-models flow (Settings → Models / Providers → “Fetch from API…”) */
+.gcard-foot { display: flex; justify-content: flex-end; margin-top: 10px; }
+.mfetch-modal { width: min(520px, 100%); max-height: 92vh; overflow-y: auto; }
+.mfetch-modal label, .mfetch-modal .mfetch-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12.5px; }
+.mfetch-modal .mfetch-row { flex-direction: row; align-items: center; gap: 8px; }
+.mfetch-modal .grow { flex: 1; min-width: 0; }
+.mfetch-modal label > input,
+.mfetch-modal label > select,
+.mfetch-modal .mfetch-row input {
+  background: var(--bg-input); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 10px; color: var(--text); width: 100%;
+}
+.mfetch-modal [data-msel] {
+  width: 100%; margin-top: 8px;
+  font-family: var(--mono); font-size: 12px;
+  background: var(--bg-input); border: 1px solid var(--line); border-radius: 8px; color: var(--text);
+}
+.mfetch-modal [data-minfo] code { font-size: 11px; }
+.mfoot { margin-top: 12px; align-items: center; }
+
 @media (max-width: 820px) {
   .settings-modal { height: 96vh; max-height: 96vh; width: 100%; border-radius: 12px; }
   .settings-layout { grid-template-columns: 1fr; }

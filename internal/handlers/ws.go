@@ -99,6 +99,10 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(history) > 0 {
 		_ = writeBinary(history)
 	}
+	// Tell the client the replay is complete so it can refit and snap the
+	// viewport back to live output instead of resting inside stale
+	// scrollback ("ghost text").
+	_ = writeJSON(map[string]string{"type": "sync"})
 
 	done := make(chan struct{})
 	var closeDone sync.Once
