@@ -52,7 +52,9 @@ GROK_INSTALL_URL="https://x.ai/cli/install.sh"
 # Piped runs have no repo context, so we work out of ~/grok-build-webui
 # and fetch a source snapshot only when actually needed.
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)" || SCRIPT_DIR=""
+# NOTE: under `set -u`, BASH_SOURCE[0] is unset when piped (`curl ... | bash`),
+# so both references below need an explicit ${...:-} default.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)" || SCRIPT_DIR=""
 if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/../go.mod" ]]; then
 	APP_DIR="$(cd -- "$SCRIPT_DIR/.." >/dev/null 2>&1 && pwd)"
 	STANDALONE=0
@@ -60,6 +62,26 @@ else
 	APP_DIR="${GROK_WEBUI_APP_DIR:-$HOME/grok-build-webui}"
 	STANDALONE=1
 	mkdir -p "$APP_DIR"
+fi
+
+# Detect a piped run (`curl -fsSL <url> | bash`) once, here at top level:
+# BASH_SOURCE[0] is genuinely unset only at top level for a stdin script.
+# (Inside functions bash fills it with the function name — verified — so
+# checks deferred to main() would never detect the pipe.)
+# For such runs stdin is the download pipe rather than the keyboard, so we
+# also open a dedicated handle (prompt_read → GROK_UI_FD) to the real
+# terminal. We deliberately do NOT rebind stdin itself: the parser may still
+# need unread bytes from the pipe. Deliberate redirections like
+# `./install.sh < answers-file` have a real BASH_SOURCE[0] and are unaffected.
+PIPED_RUN=0
+GROK_UI_FD=""
+if [[ -z "${BASH_SOURCE[0]:-}" ]]; then
+	PIPED_RUN=1
+	if { exec {GROK_UI_FD}</dev/tty; } 2>/dev/null; then
+		:   # terminal handle ready — prompt_read will use it
+	else
+		GROK_UI_FD=""   # no controlling terminal (CI etc.)
+	fi
 fi
 
 if [[ -t 1 ]]; then
@@ -302,6 +324,17 @@ bootstrap script?
 
 WT=""
 if have whiptail; then WT="whiptail"; elif have dialog; then WT="dialog"; fi
+
+# Every interactive read goes through prompt_read: under a piped run,
+# main() sets GROK_UI_FD to an fd on /dev/tty so prompts talk to the real
+# terminal even though stdin is the download pipe.
+prompt_read() {
+	if [[ -n "${GROK_UI_FD:-}" ]]; then
+		read "$@" <&"$GROK_UI_FD"
+	else
+		read "$@"
+	fi
+}
 W=76
 
 ui_title() { printf '\n%s=== %s ===%s\n' "$C_BOLD" "$1" "$C_RST" >&2; }
@@ -312,7 +345,7 @@ ui_msg() {
 		"$WT" --title "$title" --msgbox "$text" 18 "$W" >&2 || true
 	else
 		ui_title "$title"; printf '%b\n' "$text"
-		printf '%s' "${C_DIM}press enter to continue...${C_RST}" >&2; read -r _
+		printf '%s' "${C_DIM}press enter to continue...${C_RST}" >&2; prompt_read -r _ || true
 		printf '\n'
 	fi
 }
@@ -324,7 +357,8 @@ ui_yesno() {
 	else
 		while true; do
 			printf '%s [%syes%s/%sno%s]: ' "$text" "$C_GRN" "$C_RST" "$C_RED" "$C_RST" >&2
-			read -r answer
+			prompt_read -r answer || { printf '\n' >&2; return 1; }   # EOF → treat as "no"
+			# shellcheck disable=SC2154  # assigned via prompt_read's $@ passthrough
 			case "$answer" in y|Y|yes|Yes|YES) return 0;; n|N|no|No|NO|"") return 1;; esac
 			printf 'please answer yes or no.\n' >&2
 		done
@@ -338,7 +372,7 @@ ui_input() {
 	else
 		ui_title "$title"
 		printf '%s %s[%s]%s: ' "$text" "$C_DIM" "$def" "$C_RST" >&2
-		read -r out
+		prompt_read -r out || out=""   # EOF → fall back to the default
 		out="${out:-$def}"
 	fi
 	printf '%s' "$out"
@@ -365,7 +399,8 @@ ui_menu() {
 			i=$((i+1))
 		done
 		while true; do
-			printf 'choice [#]: ' >&2; read -r sel
+			printf 'choice [#]: ' >&2; prompt_read -r sel || { printf '\n' >&2; return 1; }   # EOF → cancel menu
+			# shellcheck disable=SC2154  # assigned via prompt_read's $@ passthrough
 			[[ "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#tags[@]} )) || continue
 			printf '%s\n' "${tags[$((sel-1))]}"
 			return 0
@@ -1016,7 +1051,7 @@ purge_data() {
 	fi
 	printf '  %stype %spurge%s %sto confirm deleting %s : ' \
 		"$C_BOLD" "$C_RED" "$C_BOLD" "$C_RST" "$dir" >&2
-	local ans; read -r ans
+	local ans; prompt_read -r ans || ans=""   # EOF → no confirmation, data kept
 	if [[ "$ans" == "purge" ]]; then
 		rm -rf -- "$dir"
 		ok "deleted $dir"
@@ -1159,11 +1194,44 @@ interactive_main_menu() {
 }
 
 clear_screen() { [[ -t 1 ]] && printf '\033[2J\033[H'; }
-press_any()    { printf '%s' "${C_DIM}(enter to return to menu)${C_RST}" >&2; read -r _; printf '\n'; }
+press_any()    { printf '%s' "${C_DIM}(enter to return to menu)${C_RST}" >&2; prompt_read -r _ || true; printf '\n'; }
 
 usage() {
-	# print only the leading header comment block
-	awk 'NR<=1{next} !/^#/{exit} {sub(/^#( |$)/,""); print}' "$0"
+	# Self-contained on purpose: under `curl ... | bash` there is no script
+	# file to parse headers from ($0 is just "bash").
+	cat <<'USAGE'
+grok-build-webui installer / manager
+
+Usage:
+  scripts/install.sh                                      # interactive TUI
+  scripts/install.sh install|update|remove|status|logs|config|doctor [options]
+
+Zero-setup install (no clone needed):
+  curl -fsSL https://raw.githubusercontent.com/karutoil/grok-build-webui/main/scripts/install.sh | bash
+
+Piped + non-interactive ("bash -s" passes the words after it as arguments):
+  curl -fsSL https://raw.githubusercontent.com/karutoil/grok-build-webui/main/scripts/install.sh | bash -s install --mode docker --port 8080 -y
+
+Options:
+  --mode docker|native   installation mode (default: native prebuilt binary)
+  --port N               TCP port for the web UI (default: 8080)
+  --public-url URL       base URL when behind a reverse proxy/tunnel (http(s):// required)
+  --data-dir PATH        host path for persistent data
+  --repo OWNER/NAME      override GitHub repo for releases and raw files
+  --from-source          build the binary locally with go instead of downloading
+  -y, --yes              accept defaults; never prompt
+
+Commands:
+  install   guided install as a systemd service (docker compose or native)
+  update    pull latest code, rebuild, restart the service
+  remove    uninstall the service (asks before deleting anything; --purge deletes data)
+  config    change port / URL / grok binary and apply
+  status    detailed service status
+  logs      follow service logs (ctrl-c to exit)
+  doctor    environment sanity check
+
+Every prompt accepts its default with plain Enter.
+USAGE
 	exit "${1:-0}"
 }
 
@@ -1191,8 +1259,18 @@ main() {
 		shift
 	done
 
+	# Interactive input plumbing for piped runs was set up at top level
+	# (PIPED_RUN / GROK_UI_FD); nothing to do here.
+
 	case "${CMD:-}" in
-		"")       interactive_main_menu ;;
+		"")
+			if [[ "$PIPED_RUN" == 1 && -z "$GROK_UI_FD" ]]; then
+				warn "no interactive terminal available (stdin is not a TTY)."
+				log  "for a hands-off install, pipe arguments after 'bash -s', e.g.:"
+				log  "  curl -fsSL ${RAW_BASE}/scripts/install.sh | bash -s install --mode docker --port 8080 -y"
+				usage 0
+			fi
+			interactive_main_menu ;;
 		install)  banner; do_install ;;
 		update)   banner; do_update ;;
 		remove)   banner; do_remove ;;
@@ -1204,7 +1282,7 @@ main() {
 	esac
 }
 
-# Only run when executed directly; sourcing the file (for testing) is a no-op.
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+# Only run when executed directly or piped to bash; sourcing (for testing) is a no-op.
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
 	main "$@"
 fi
