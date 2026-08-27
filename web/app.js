@@ -273,6 +273,34 @@ function toast(text, kind = '') {
   setTimeout(() => el.remove(), 4200);
 }
 
+// writeClipboard writes to the real OS clipboard. navigator.clipboard only
+// exists on secure contexts (https or localhost); on plain-http LAN hosts it
+// is undefined, so fall back to a hidden textarea + execCommand('copy').
+async function writeClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (err) {
+    // Permission denied / document not focused — fall through to execCommand.
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 function setStatus(left, mid = '') {
   const l = $('#status-left');
   l.textContent = left;
@@ -1096,21 +1124,73 @@ function attachOne(id) {
     const p = state.panes[id];
     if (p?.ws?.readyState === 1) p.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
   });
+  // OSC 52: the CLI sets the clipboard by emitting ESC ] 52 ; c ; <base64>
+  // BEL. Desktop terminals honor it; without this handler xterm.js silently
+  // drops the sequence, so "Copied!" in the CLI never reaches the OS clipboard.
+  // Decode and write it for real. The OSC handler API lives on the parser
+  // sub-object, not on the Terminal itself (xterm.js 5.x).
+  term.parser.registerOscHandler(52, (data) => {
+    const cur = state.panes[id];
+    if (cur && cur.replaying) return true; // replayed history — not a fresh copy
+    const semi = data.indexOf(';');
+    if (semi < 0) return true;
+    const payload = data.slice(semi + 1).trim();
+    if (!payload || payload === '?') return true; // clipboard query: ignore
+    try {
+      const bin = atob(payload);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const text = new TextDecoder().decode(bytes);
+      if (!text) return true;
+      writeClipboard(text).then(ok => {
+        if (ok) toast('Copied to clipboard', 'ok');
+        else toast('Copy failed — browser blocked clipboard access', 'error');
+      });
+    } catch { /* malformed base64 — ignore */ }
+    return true;
+  });
+
   term.attachCustomKeyEventHandler((ev) => {
     if (ev.ctrlKey && (ev.key === '`' || ev.key === 'b' || ev.key === ',' || ev.key === 'w')) return false;
+    // Ctrl+Shift+C / Ctrl+Shift+V: copy/paste with the browser clipboard,
+    // mirroring the desktop-terminal convention (Ctrl+C stays SIGINT).
+    if (ev.type === 'keydown' && ev.ctrlKey && ev.shiftKey && (ev.key === 'C' || ev.key === 'V')) {
+      const pane = state.panes[id];
+      if (!pane || !pane.term) return false;
+      if (ev.key === 'C') {
+        const sel = pane.term.getSelection();
+        if (!sel) return false;
+        writeClipboard(sel).then(ok => {
+          if (ok) toast('Copied to clipboard', 'ok');
+          else toast('Copy failed — browser blocked clipboard access', 'error');
+        });
+      } else {
+        const read = navigator.clipboard && navigator.clipboard.readText
+          ? navigator.clipboard.readText()
+          : Promise.reject(new Error('unavailable'));
+        read.then(text => {
+          if (text) pane.term.paste(text);
+        }).catch(() => toast('Paste blocked — use Ctrl+V or middle-click', 'error'));
+      }
+      return false;
+    }
     return true;
   });
   if (state.prefs.copyOnSelect) {
     term.onSelectionChange(() => {
       const sel = term.getSelection();
-      if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+      if (sel) writeClipboard(sel);
     });
   }
 
   const prevWs = pane?.ws;
+  const reuseWs = !!(prevWs && prevWs.readyState === 1);
   state.panes[id] = {
-    term, fit, el, ro, ws: prevWs && prevWs.readyState === 1 ? prevWs : null,
+    term, fit, el, ro, ws: reuseWs ? prevWs : null,
     closed: false, retries: pane?.retries || 0, reconnectTimer: null,
+    // A fresh connection replays buffered history (which may contain old
+    // OSC 52 sequences); guard until that replay has been parsed.
+    replaying: !reuseWs,
   };
   if (state.panes[id].ws) wireWS(id, state.panes[id].ws);
   else if (sess?.status !== 'exited') connectWS(id);
@@ -1134,6 +1214,7 @@ function wireWS(id, ws) {
   if (!p) return;
   ws.onopen = () => {
     p.retries = 0;
+    p.replaying = true;
     try { p.fit.fit(); } catch {}
     try { ws.send(JSON.stringify({ type: 'resize', cols: p.term.cols, rows: p.term.rows })); } catch {}
     markSession(id, 'running');
@@ -1156,6 +1237,9 @@ function wireWS(id, ws) {
         // viewport on live output instead of stale replayed scrollback.
         try { p.fit.fit(); } catch {}
         p.term.scrollToBottom();
+        // The replay buffer can contain old OSC 52 clipboard sequences; the
+        // queued writes (history + sync) have been parsed by now, so unguard.
+        p.replaying = false;
       } else if (m.type === 'error') {
         p.term.writeln(`\r\n\x1b[31m[error: ${m.error || 'unknown'}]\x1b[0m`);
       } else if (m.type === 'pong') { /* keepalive */ }

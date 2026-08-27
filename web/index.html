@@ -4,11 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>Grok Build</title>
-<script>
-  // Apply the cached WebUI theme before first paint to avoid a flash of the
-  // default palette; app.js re-syncs it against config.toml shortly after.
-  try { var __t = localStorage.getItem('gbw.theme'); if (__t) document.documentElement.dataset.theme = __t; } catch (e) {}
-</script>
+<script src="/theme-boot.js"></script>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230c0c0e'/%3E%3Cpath d='M8 22V10h3.2l4.8 8.4L20.8 10H24v12h-2.4v-7.6L17.2 22h-2.4l-4.4-7.6V22H8z' fill='%23f4c025'/%3E%3C/svg%3E" />
 <link rel="stylesheet" href="/vendor/xterm.min.css" />
 <link rel="stylesheet" href="/style.css" />
